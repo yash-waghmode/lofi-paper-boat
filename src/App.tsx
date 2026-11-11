@@ -342,10 +342,11 @@ export default function App() {
           boatRef.current = currentBoat;
 
           // 4. Evaluate Checkpoints & Laps
+          const targetCpIdx = checkpointIdxRef.current;
           const cpResult = evaluateCheckpoints(
             currentBoat,
             currentTrack.checkpoints,
-            checkpointIdxRef.current,
+            targetCpIdx,
             statsRef.current,
             dt
           );
@@ -355,6 +356,7 @@ export default function App() {
 
           if (cpResult.passedCheckpoint) {
             sound.playCheckpointChime();
+            renderer.triggerCheckpointPulse(targetCpIdx);
             renderer.emitSplash(currentBoat.x, currentBoat.y + 0.5, currentBoat.z, 0.5);
           }
 

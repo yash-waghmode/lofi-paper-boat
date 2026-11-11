@@ -1,20 +1,20 @@
 import { BoatInput, BoatState, TrackCheckpoint, Obstacle, RaceStats } from './types';
 
 export const PHYSICS_CONSTANTS = {
-  ACCELERATION: 18.0,
-  MAX_SPEED: 26.0,
-  REVERSE_SPEED: 7.0,
-  LINEAR_DRAG: 1.15,
-  QUADRATIC_DRAG: 0.045,
-  STEER_SPEED: 2.8,
-  DRIFT_STEER_BOOST: 1.6,
-  DRIFT_SLIP_DRAG: 0.35,   // lower friction when drifting
-  NORMAL_SLIP_DRAG: 5.5,   // high grip normally
+  ACCELERATION: 26.0,       // Punchy, immediate throttle bite
+  MAX_SPEED: 30.0,          // Crisp top speed
+  REVERSE_SPEED: 8.5,       // Responsive reverse brake
+  LINEAR_DRAG: 0.95,        // Weighted fluid coasting
+  QUADRATIC_DRAG: 0.038,    // High-speed water drag
+  STEER_SPEED: 3.2,         // Smooth, authoritative steering
+  DRIFT_STEER_BOOST: 1.7,   // Snappy rotation when drifting
+  DRIFT_SLIP_DRAG: 0.32,    // Smooth drift glide
+  NORMAL_SLIP_DRAG: 5.8,    // High tracking grip
   WAVE_AMPLITUDE: 0.12,
   WAVE_FREQUENCY: 0.8,
-  ROLL_DAMPING: 6.0,
-  PITCH_DAMPING: 5.0,
-  RIVER_CURRENT_SPEED: 1.4, // subtle ambient current
+  ROLL_DAMPING: 7.5,        // Damped, organic roll
+  PITCH_DAMPING: 6.0,
+  RIVER_CURRENT_SPEED: 1.6, // Tactile river current
 };
 
 /**
@@ -63,36 +63,38 @@ export function updateBoatPhysics(
 
   // Drift trigger: active drift key OR sharp steering at speed
   const speed = Math.sqrt(vx * vx + vz * vz);
-  const intendsDrift = input.drift || (Math.abs(input.steer) > 0.85 && speed > 10.0 && input.brake > 0.2);
+  const intendsDrift = input.drift || (Math.abs(input.steer) > 0.82 && speed > 9.0 && input.brake > 0.15);
 
   // Smooth drift factor transition
-  const targetDriftFactor = intendsDrift && speed > 5.0 ? 1.0 : 0.0;
-  driftFactor += (targetDriftFactor - driftFactor) * Math.min(1.0, clampedDt * 8.0);
-  isDrifting = driftFactor > 0.4 && speed > 6.0;
+  const targetDriftFactor = intendsDrift && speed > 4.5 ? 1.0 : 0.0;
+  driftFactor += (targetDriftFactor - driftFactor) * Math.min(1.0, clampedDt * 9.0);
+  isDrifting = driftFactor > 0.35 && speed > 5.0;
 
-  // Steering torque
+  // Steering torque with speed-dependent authority
   const steerMultiplier = isDrifting ? PHYSICS_CONSTANTS.DRIFT_STEER_BOOST : 1.0;
-  // Can only steer when moving
-  const speedSteerAuthority = Math.min(1.0, speed / 3.0);
+  // Responsive turning with low-speed turning assist
+  const speedSteerAuthority = Math.min(1.0, Math.max(0.35, speed / 2.5));
   const steerImpulse = -input.steer * PHYSICS_CONSTANTS.STEER_SPEED * steerMultiplier * speedSteerAuthority;
   
-  yawRate += (steerImpulse - yawRate) * Math.min(1.0, clampedDt * 10.0);
+  yawRate += (steerImpulse - yawRate) * Math.min(1.0, clampedDt * 12.0);
   heading += yawRate * clampedDt;
 
   // Keep heading in [0, 2*PI]
   if (heading > Math.PI * 2) heading -= Math.PI * 2;
   if (heading < 0) heading += Math.PI * 2;
 
-  // Acceleration and Braking
+  // Punchy Acceleration and Braking with initial bite
   let targetForwardAccel = 0;
   if (input.throttle > 0) {
-    targetForwardAccel = input.throttle * PHYSICS_CONSTANTS.ACCELERATION;
+    // Punchy launch boost from low speeds
+    const launchBoost = speed < 6.0 ? 1.3 : 1.0;
+    targetForwardAccel = input.throttle * PHYSICS_CONSTANTS.ACCELERATION * launchBoost;
   } else if (input.brake > 0) {
-    // Reverse or strong brake
-    if (forwardVelocity > 0.5) {
-      targetForwardAccel = -input.brake * PHYSICS_CONSTANTS.ACCELERATION * 1.5; // active brake
+    // Active hydrodynamic braking or reverse
+    if (forwardVelocity > 0.4) {
+      targetForwardAccel = -input.brake * PHYSICS_CONSTANTS.ACCELERATION * 1.6;
     } else {
-      targetForwardAccel = -input.brake * PHYSICS_CONSTANTS.REVERSE_SPEED * 0.8; // reverse
+      targetForwardAccel = -input.brake * PHYSICS_CONSTANTS.REVERSE_SPEED * 0.9;
     }
   }
 
@@ -105,10 +107,10 @@ export function updateBoatPhysics(
   // Lateral resistance depends heavily on drift state
   const lateralFriction = isDrifting ? PHYSICS_CONSTANTS.DRIFT_SLIP_DRAG : PHYSICS_CONSTANTS.NORMAL_SLIP_DRAG;
   
-  // Update forward & lateral velocity
+  // Update forward & lateral velocity with weighted momentum
   let newForwardVelocity = forwardVelocity + targetForwardAccel * clampedDt;
   
-  // Drag forces
+  // Drag forces (fluid resistance)
   const dragForce = (PHYSICS_CONSTANTS.LINEAR_DRAG + PHYSICS_CONSTANTS.QUADRATIC_DRAG * Math.abs(newForwardVelocity)) * newForwardVelocity;
   newForwardVelocity -= dragForce * clampedDt;
 
@@ -125,7 +127,7 @@ export function updateBoatPhysics(
   vx = newForwardVelocity * updatedForwardX + newLateralVelocity * updatedRightX;
   vz = newForwardVelocity * updatedForwardZ + newLateralVelocity * updatedRightZ;
 
-  // Add subtle gentle river flow current along forward track direction
+  // Subtle natural river flow current
   vz += PHYSICS_CONSTANTS.RIVER_CURRENT_SPEED * 0.05 * clampedDt;
 
   // Position update
@@ -136,12 +138,12 @@ export function updateBoatPhysics(
   const waterHeight = getWaterHeight(x, z, time);
   y += (waterHeight - y) * Math.min(1.0, clampedDt * 8.0);
 
-  // Dynamic boat roll (tilt left/right when turning or drifting)
-  const targetRoll = -yawRate * 0.22 - (newLateralVelocity / 15.0) * 0.28;
+  // Tactile boat roll (tilts into turns, counter-steers into drifts)
+  const targetRoll = -yawRate * 0.35 - (newLateralVelocity / 12.0) * 0.32;
   roll += (targetRoll - roll) * Math.min(1.0, clampedDt * PHYSICS_CONSTANTS.ROLL_DAMPING);
 
-  // Dynamic boat pitch (tilt nose up on acceleration, nose down on brake)
-  const targetPitch = (targetForwardAccel / PHYSICS_CONSTANTS.ACCELERATION) * 0.15;
+  // Tactile boat pitch (lift bow on punchy acceleration, dip on braking)
+  const targetPitch = (targetForwardAccel / PHYSICS_CONSTANTS.ACCELERATION) * 0.22;
   pitch += (targetPitch - pitch) * Math.min(1.0, clampedDt * PHYSICS_CONSTANTS.PITCH_DAMPING);
 
   // Drift scoring

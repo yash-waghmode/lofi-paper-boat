@@ -4,7 +4,6 @@ import { TrackData, BoatState, CameraView, WeatherType } from './types';
 import {
   createOrigamiBoat,
   createBoatContactDisc,
-  createCheckpointGate,
   createRiverRock,
   createFloatingLeaf,
   createDriftwoodLog,
@@ -12,6 +11,8 @@ import {
   createPineTree,
   createCherryPetalGeometry,
 } from './proceduralModels';
+import { createRiverWaterMaterial } from '../components/RiverTrack';
+import { createGlowingCheckpointGate, CheckpointGateEntity } from '../components/Checkpoints';
 import { getWaterHeight } from './physics';
 
 export const isSoftwareGl = (() => {
@@ -65,10 +66,11 @@ export class SceneRenderer {
   // Scene entities
   public boatMesh: THREE.Group;
   private boatContactDisc: THREE.Mesh;
-  private checkpointGates: THREE.Group[] = [];
+  private checkpointEntities: CheckpointGateEntity[] = [];
   private obstacleMeshes: THREE.Object3D[] = [];
   private foliageMeshes: THREE.Object3D[] = [];
   private riverMesh: THREE.Mesh | null = null;
+  private riverMat: THREE.MeshStandardMaterial | null = null;
   private terrainMesh: THREE.Mesh | null = null;
 
   // Lighting
@@ -114,7 +116,7 @@ export class SceneRenderer {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.18;
     this.renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = !isSoftwareGl;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -124,10 +126,10 @@ export class SceneRenderer {
     this.renderer.setSize(width, height);
     container.appendChild(this.renderer.domElement);
 
-    // 2. Scene setup
+    // 2. Scene setup with exponential cream fog (#F5EFEB)
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(track.sceneryColor.ground);
-    this.scene.fog = new THREE.Fog(track.sceneryColor.ground, 100, 340);
+    this.scene.background = new THREE.Color('#F5EFEB');
+    this.scene.fog = new THREE.FogExp2(0xF5EFEB, 0.0078);
 
     // Camera
     this.camera = new THREE.PerspectiveCamera(50, width / height, 0.2, 500);
@@ -142,15 +144,15 @@ export class SceneRenderer {
       // Safety fallback
     }
 
-    // 4. Lighting Rig
+    // 4. Cozy Atmospheric Lighting: Warm Directional Sun + Soft Ambient Fill
     this.hemiLight = new THREE.HemisphereLight(
-      new THREE.Color(track.sceneryColor.ambient),
-      new THREE.Color(0xD9CDB8),
-      0.9
+      new THREE.Color('#FFF8F0'), // Soft warm cream sky fill
+      new THREE.Color('#D8CFBE'), // Warm ground bounce
+      1.15
     );
     this.scene.add(this.hemiLight);
 
-    this.dirLight = new THREE.DirectionalLight(new THREE.Color(track.sceneryColor.sun), 1.6);
+    this.dirLight = new THREE.DirectionalLight(new THREE.Color('#FFF3D6'), 1.85);
     this.dirLight.position.set(40, 60, 30);
     this.dirLight.castShadow = !isSoftwareGl;
     if (!isSoftwareGl) {
@@ -292,23 +294,23 @@ export class SceneRenderer {
     // Clean up previous track items
     if (this.riverMesh) this.scene.remove(this.riverMesh);
     if (this.terrainMesh) this.scene.remove(this.terrainMesh);
-    this.checkpointGates.forEach(g => this.scene.remove(g));
-    this.checkpointGates = [];
+    this.checkpointEntities.forEach(e => this.scene.remove(e.group));
+    this.checkpointEntities = [];
     this.obstacleMeshes.forEach(o => this.scene.remove(o));
     this.obstacleMeshes = [];
     this.foliageMeshes.forEach(f => this.scene.remove(f));
     this.foliageMeshes = [];
 
-    // Update scene colors
-    this.scene.background = new THREE.Color(track.sceneryColor.ground);
+    // Exponential cream fog (#F5EFEB)
+    this.scene.background = new THREE.Color('#F5EFEB');
     if (this.scene.fog) {
-      this.scene.fog.color.set(track.sceneryColor.ground);
+      this.scene.fog.color.set('#F5EFEB');
     }
 
     // Set track weather
     this.setWeather(track.defaultWeather || 'sakura');
 
-    // 1. Build River Ribbon Mesh
+    // 1. Build Animated River Ribbon Mesh
     const pts = track.pathPoints;
     const riverGeo = new THREE.BufferGeometry();
     const halfW = track.riverWidth / 2;
@@ -361,17 +363,9 @@ export class SceneRenderer {
     riverGeo.setIndex(indices);
     riverGeo.computeVertexNormals();
 
-    const riverMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(track.sceneryColor.water),
-      roughness: 0.12,
-      metalness: 0.15,
-      transparent: true,
-      opacity: 0.94,
-      side: THREE.DoubleSide,
-      flatShading: true,
-    });
-
-    this.riverMesh = new THREE.Mesh(riverGeo, riverMat);
+    // Vibrant blue flowing river material (#1E88E5)
+    this.riverMat = createRiverWaterMaterial();
+    this.riverMesh = new THREE.Mesh(riverGeo, this.riverMat);
     this.riverMesh.position.y = 0.04; // Sit cleanly atop riverbed
     this.riverMesh.receiveShadow = true;
     this.scene.add(this.riverMesh);
@@ -434,15 +428,15 @@ export class SceneRenderer {
     this.terrainMesh.receiveShadow = true;
     this.scene.add(this.terrainMesh);
 
-    // 3. Build Checkpoint Gates
+    // 3. Build Glowing Spatial Signpost Checkpoint Gates
     track.checkpoints.forEach((cp, idx) => {
-      const gate = createCheckpointGate(cp.width);
-      gate.position.set(cp.x, 0, cp.z);
+      const entity = createGlowingCheckpointGate(cp.width, idx === 0);
+      entity.group.position.set(cp.x, 0, cp.z);
       const rot = Math.atan2(cp.tangentX, cp.tangentZ);
-      gate.rotation.y = rot;
-      gate.userData = { checkpointIndex: idx };
-      this.checkpointGates.push(gate);
-      this.scene.add(gate);
+      entity.group.rotation.y = rot;
+      entity.group.userData = { checkpointIndex: idx };
+      this.checkpointEntities.push(entity);
+      this.scene.add(entity.group);
     });
 
     // 4. Place Obstacles
@@ -516,6 +510,12 @@ export class SceneRenderer {
     }
   }
 
+  public triggerCheckpointPulse(index: number) {
+    if (index >= 0 && index < this.checkpointEntities.length) {
+      this.checkpointEntities[index].pulseTimer = 1.0;
+    }
+  }
+
   public update(
     boat: BoatState,
     cameraView: CameraView,
@@ -535,7 +535,10 @@ export class SceneRenderer {
     this.boatContactDisc.position.set(boat.x, boat.y + 0.02, boat.z);
     this.boatContactDisc.rotation.y = boat.heading;
 
-    // 2. Animate River Water Surface (Gentle wave ripple)
+    // 2. Animate River Water Surface (Flowing water texture + vertex ripples)
+    if (this.riverMat?.map) {
+      this.riverMat.map.offset.y -= clampedDt * 0.32;
+    }
     if (this.riverMesh) {
       const pos = this.riverMesh.geometry.attributes.position;
       for (let i = 2; i < pos.count; i += 3) {
@@ -545,6 +548,23 @@ export class SceneRenderer {
       }
       pos.needsUpdate = true;
     }
+
+    // 2b. Animate Glowing Checkpoint Arches (Breathing lanterns & dynamic radiant pulse shockwave)
+    this.checkpointEntities.forEach((cp, idx) => {
+      const breath = Math.sin(time * 3.0 + idx * 1.5) * 0.4 + 1.6;
+      cp.lanternMat.emissiveIntensity = cp.pulseTimer > 0 ? (breath + cp.pulseTimer * 3.5) : breath;
+      cp.craneMat.emissiveIntensity = cp.pulseTimer > 0 ? (2.0 + cp.pulseTimer * 4.0) : 2.0;
+
+      if (cp.pulseTimer > 0) {
+        cp.pulseTimer = Math.max(0, cp.pulseTimer - clampedDt * 1.4);
+        const progress = 1 - cp.pulseTimer;
+        const scale = 1 + progress * 14.0;
+        cp.pulseRing.scale.set(scale, scale, 1);
+        (cp.pulseRing.material as THREE.MeshBasicMaterial).opacity = Math.max(0, cp.pulseTimer * 0.85);
+      } else {
+        (cp.pulseRing.material as THREE.MeshBasicMaterial).opacity = 0;
+      }
+    });
 
     // 3. Animate Obstacles (Floating leaves and logs bob in current)
     this.obstacleMeshes.forEach((mesh, idx) => {
