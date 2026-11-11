@@ -1,0 +1,6 @@
+{
+  "name": "Lo-Fi Paper Drift",
+  "description": "A cozy, lo-fi 3D paper boat racing game navigating winding river circuits with realistic water physics and drifting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
